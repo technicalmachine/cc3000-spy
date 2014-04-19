@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// require('look').start();
+
 var fs = require('fs');
 var util = require('util');
 var zlib = require('zlib');
@@ -20,14 +22,26 @@ var opts = require('nomnom')
       flag: true,
       help: 'Show raw communication'
     },
-    log: {
+    input: {
       position: 0,
       help: 'Log options',
+    },
+    output: {
+      abbr: 'o',
+      help: 'Save log as output',
+      default: (new Date).toJSON() + '.log'
     }
   })
   .parse();
 
 require('buffer').INSPECT_MAX_BYTES = 16;
+
+var LARR = '\u2190';
+var RARR = '\u2192';
+
+
+
+
 
 var D = require('./defines');
 var HCI_EVENT = {}
@@ -43,7 +57,7 @@ function parseHost (dir, buf, miso)
 
   if (buf.length < 5) { return abort('buf len < 5'); }
   if (buf[0] == 1) {
-    var opcode = '-> write'.cyan;
+    var opcode = (RARR + ' write').cyan;
     var length = buf.readUInt16BE(1);
     var packetlen = Math.max(5, length) // minimum 5 bytes in payload.
     var payload = buf.slice(5);
@@ -51,7 +65,7 @@ function parseHost (dir, buf, miso)
     //  return abort('expecting %d bytes in write payload, received %d', length, payload.length);
     // }
   } else if (buf[0] == 3) {
-    var opcode = '<- read '.yellow;
+    var opcode = (LARR + ' read ').yellow;
     var length = miso.readUInt16BE(3)
     var payload = miso.slice(5);
     // if (payload.length >> 1 != length >> 1) {
@@ -70,6 +84,12 @@ function parseHost (dir, buf, miso)
     return (nget(arg) + '                ').slice(0, 20);
   }
 
+  function formatFdset (n) {
+    return ('0000' + n.toString(2)).slice(-4).split('').reverse().map(function (s, i) {
+      return s == '0' ? '.'.grey : String(i)
+    }).join('');
+  }
+
   var cmnd_format = {
     SOCKET: function (data) {
       return util.format('-> request to open socket...');
@@ -81,12 +101,12 @@ function parseHost (dir, buf, miso)
       return util.format('-> connecting socket #%d... (%d.%d.%d.%d)', data.readInt32LE(0), /*data.readInt32LE(8),*/ data.readUInt8(19), data.readUInt8(18), data.readUInt8(17), data.readUInt8(16))
     },
     SELECT: function (data) {
-      return util.format('-> poll sockets (%s). r:%s w:%s e:%s. timeout: %dms',
+      return util.format(RARR + ' r %s w %s e %s [%s, timeout: %dms]',
           // data.readInt32LE(0),
+          formatFdset(data.readInt32LE(24)),
+          formatFdset(data.readInt32LE(28)),
+          formatFdset(data.readInt32LE(32)),
           data.readInt32LE(20) ? 'blocking' : 'non-blocking',
-          ('0000' + data.readInt32LE(24).toString(2)).slice(-4),
-          ('0000' + data.readInt32LE(28).toString(2)).slice(-4),
-          ('0000' + data.readInt32LE(32).toString(2)).slice(-4),
           data.readInt32LE(36)*1e3 + data.readInt32LE(40)/1e3);
     },
   };
@@ -98,41 +118,65 @@ function parseHost (dir, buf, miso)
       return util.format('<- socket closed. (errno %d)', data.readInt32LE(0));
     },
     SELECT: function (data) {
-      return util.format('<- polled sockets (errno %d).    r:%s w:%s e:%s.',
-          data.readInt32LE(0),
-          ('0000' + data.readInt32LE(4).toString(2)).slice(-4),
-          ('0000' + data.readInt32LE(8).toString(2)).slice(-4),
-          ('0000' + data.readInt32LE(12).toString(2)).slice(-4));
+      return util.format(LARR + ' r %s w %s e %s [status %d]',
+          formatFdset(data.readInt32LE(4)),
+          formatFdset(data.readInt32LE(8)),
+          formatFdset(data.readInt32LE(12)),
+          data.readInt32LE(0));
     },
   }
 
+  function formatCommand (n) {
+    return cmnd_format[n] && function () {
+      try {
+        return cmnd_format[n].apply(null, arguments);
+      } catch (e) {
+        return String(e.message).red
+      }
+    }
+  }
+
+  function formatEvent (n) {
+   return evnt_format[n] && function () {
+      try {
+        return evnt_format[n].apply(null, arguments);
+      } catch (e) {
+        return String(e.message).red
+      }
+    }
+  }
+
   // parse payload
-  if (payload[0] == 1) {
-    // if (payload.length != 5) { return util.format('invalid hci command len -', buf).red }
-    var cmdop = payload.readUInt16LE(1);
-    if (!HCI_EVENT[cmdop]) { return abort('unknown hci command', cmdop.toString(16), payload).red; }
-    var arglen = payload[3];
-    var result = (cmnd_format[nget(cmdop)] || function (buf) { return util.format('%d bytes:', buf.length, buf).grey; })
-    payload = util.format('%s%s %s', 'HCI_CMND_'.cyan, n(cmdop).cyan.bold, result(payload.slice(4, 4+arglen)));
-  } else if (payload[0] == 2) {
-    var dataop = payload[1];
-    var arglen = payload[2];
-    var payloadlen = payload.readUInt16BE(1);
-    payload = util.format((buf[0] == 1 ? '         DATA'.bold.cyan : '         DATA'.bold.yellow) + n(''), util.format(payload.slice(5).length, 'bytes:', payload.slice(5)).grey);
-  } else if (payload[0] == 3) {
-    var patchop = payload.readUInt16BE(1);
-    var patchlen = payload.readUInt16BE(3);
-    var hcipayload = payload.readUInt16BE(5);
-    payload = util.format('PTCH'.green, patchop.toString(16), patchlen, hcipayload);
-  } else if (payload[0] == 4) {
-    var eventop = payload.readUInt16LE(1);
-    if (!HCI_EVENT[eventop]) { return abort('unknown hci event 0x' + eventop.toString(16)); }
-    var arglen = payload.readUInt16LE(3);
-    // var hcistatus = payload[4];
-    var result = (evnt_format[nget(eventop)] || function (buf) { return util.format('%d bytes:', buf.length, buf).grey; })
-    payload = util.format('%s%s %s', 'HCI_EVNT_'.yellow, n(eventop).yellow.bold, result(payload.slice(5, 4+arglen)));
-  } else {
-    return abort('cannot evaluate payload cmd', payload[0]);
+  try {
+    if (payload[0] == 1) {
+      // if (payload.length != 5) { return util.format('invalid hci command len -', buf).red }
+      var cmdop = payload.readUInt16LE(1);
+      if (!HCI_EVENT[cmdop]) { return abort('unknown hci command', cmdop.toString(16), payload).red; }
+      var arglen = payload[3];
+      var result = (formatCommand(nget(cmdop)) || function (buf) { return util.format('%d bytes:', buf.length, buf).grey; })
+      payload = util.format('%s%s %s', 'HCI_CMND_'.cyan, n(cmdop).cyan.bold, result(payload.slice(4, 4+arglen)));
+    } else if (payload[0] == 2) {
+      var dataop = payload[1];
+      var arglen = payload[2];
+      var payloadlen = payload.readUInt16BE(1);
+      payload = util.format((buf[0] == 1 ? '         DATA'.bold.cyan : '         DATA'.bold.yellow) + n(''), util.format(payload.slice(5).length, 'bytes:', payload.slice(5)).grey);
+    } else if (payload[0] == 3) {
+      var patchop = payload.readUInt16BE(1);
+      var patchlen = payload.readUInt16BE(3);
+      var hcipayload = payload.readUInt16BE(5);
+      payload = util.format('PTCH'.green, patchop.toString(16), patchlen, hcipayload);
+    } else if (payload[0] == 4) {
+      var eventop = payload.readUInt16LE(1);
+      if (!HCI_EVENT[eventop]) { return abort('unknown hci event 0x' + eventop.toString(16)); }
+      var arglen = payload.readUInt16LE(3);
+      // var hcistatus = payload[4];
+      var result = (formatEvent(nget(eventop)) || function (buf) { return util.format('%d bytes:', buf.length, buf).grey; })
+      payload = util.format('%s%s %s', 'HCI_EVNT_'.yellow, n(eventop).yellow.bold, result(payload.slice(5, 4+arglen)));
+    } else {
+      return abort('cannot evaluate payload cmd', payload[0]);
+    }
+  } catch (e) {
+    return abort(e.message);
   }
 
   return util.format('%s %s', opcode, payload);
@@ -140,7 +184,8 @@ function parseHost (dir, buf, miso)
 
 var iterator = (function () {
   // data is a stream of data
-  var misob = [], mosib = [], miso = [], mosi = [];
+  var miso = new Buffer(4096); var misob = 0, misobi = 0;
+  var mosi = new Buffer(4096); var mosib = 0, mosibi = 0;
   var dir = null;
 
   return function next (sample, change, data) {
@@ -148,24 +193,27 @@ var iterator = (function () {
       console.log(('\n\ncc3000 enabled at ' + sample).toUpperCase().white.bold)
     }
     if (change.cs == 0) {
-      miso = []; misob = [];
-      mosi = []; mosib = [];
+      misob = 0, misobi = 0;
+      mosib = 0, mosibi = 0;
     }
     if (change.cs == 1) {
+      var mosiview = mosi.slice(0, (mosibi/8)|0);
+      var misoview = miso.slice(0, (misobi/8)|0);
+
       // end of switch
       if (opts.raw) {
-        console.log('MOSI', new Buffer(mosi));
-        console.log('MISO', new Buffer(miso));
+        console.log('MOSI', mosiview);
+        console.log('MISO', misoview);
       }
       // else {
         if (dir == 'host') {
-          console.log('', parseHost(dir, new Buffer(mosi), new Buffer(miso)));
+          console.log('', parseHost(dir, mosiview, misoview));
         } else {
-          console.log('', parseHost(dir, new Buffer(mosi), new Buffer(miso)));
+          console.log('', parseHost(dir, mosiview, misoview));
         }
       // }
     }
-    if ('irq' in change) {
+    if (change.irq !== null) {
       if (change.irq) {
         if (opts.signals) if (!data.cs) console.log('↑ IRQ'.grey); else console.log('↑ CS '.grey);
         if (dir == 'cc3k') {
@@ -180,7 +228,7 @@ var iterator = (function () {
         }
       }
     }
-    if ('cs' in change) {
+    if (change.cs !== null) {
       if (change.cs) {
         if (dir == 'host') {
           dir = null;
@@ -195,17 +243,18 @@ var iterator = (function () {
     }
     if (change.sck == false) {
       if (data.sw_en) {
-        misob.push(data.miso); mosib.push(data.mosi);
+        misob = (misob << 1) + (data.miso ? 1 : 0); misobi++;
+        mosib = (mosib << 1) + (data.mosi ? 1 : 0); mosibi++;
         // console.log('mosi:', data.mosi, 'miso:', data.miso);
         // console.log(miso.length);
-        if (misob.length == 8) {
+        if ((misobi % 8) == 0) {
           // console.log('miso:', parseInt(miso.join(''), 2).toString(16));
-          miso.push(parseInt(misob.join(''), 2))
-          misob = [];
+          miso[((misobi / 8)|0) - 1] = misob;
+          misob = 0;
         }
-        if (mosib.length == 8) {
-          mosi.push(parseInt(mosib.join(''), 2))
-          mosib = [];
+        if ((mosibi % 8) == 0) {
+          mosi[((mosibi / 8)|0) - 1] = mosib;
+          mosib = 0;
         }
       }
     }
@@ -213,9 +262,9 @@ var iterator = (function () {
 })();
 
 
-if (!opts.log) {
+if (!opts.input) {
   // Start probing.
-  require('./probe').probe(function () {
+  require('./probe').probe(function (prober) {
     var log = ts.createReadStream('/tmp/sigrok.vcd', {
       beginAt: 0,
       onMove: 'follow',
@@ -224,15 +273,29 @@ if (!opts.log) {
       endOnError: false
     });
 
+    var once = false;
+    process.on('SIGINT', function () {
+      // Only kill prober.
+      if (once) {
+        return process.exit(1);
+      }
+      once = true;
+      console.error('(killed sigrok, wait to finish...)'.grey);
+      log.watcher.close();
+      prober.on('exit', function () {
+        fs.createReadStream('/tmp/sigrok.vcd')
+          .pipe(zlib.createGzip())
+          .pipe(fs.createWriteStream(filename))
+      })
+      prober.kill();
+    })
+
     // Pipe to gzipped output.
-    var filename = __dirname + '/log/' + (new Date).toJSON() + '.log';
+    var filename = __dirname + '/log/' + opts.output;
     console.log(('(outputting to ' + filename + ')').grey);
     process.on('exit', function () {
       console.log(('(saved output to ' + filename + ')').grey);
     });
-    log
-      .pipe(zlib.createGzip())
-      .pipe(fs.createWriteStream(filename))
 
     // Start with tailed log.
     start(log);
@@ -240,7 +303,7 @@ if (!opts.log) {
 
 } else {
   // Load gzipped output
-  start(fs.createReadStream(opts.log)
+  start(fs.createReadStream(opts.input)
     .pipe(zlib.createGunzip()));
 }
 
@@ -253,5 +316,5 @@ function start (log)
   .on('begin', function (state) {
     // console.log(state);
   })
-  .on('sample', iterator);
+  .on('sample', iterator)
 };

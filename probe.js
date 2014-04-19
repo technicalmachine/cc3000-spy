@@ -24,9 +24,9 @@ exports.probe = function (next) {
     '--probes', '0=cs,1=miso,2=irq,3=mosi,4=sck,5=sw_en'
   ])
   sig.stderr.on('data', function (data) {
-    if (data.match(/Device stopped/)) {
+    if (String(data).match(/Device stopped/)) {
       sig.kill();
-      console.error(data);
+      console.error(String(data));
     }
   })
   sig.stdout.pipe(process.stdout);
@@ -45,6 +45,6 @@ exports.probe = function (next) {
       return setImmediate(loop);
     }
     fs.closeSync(fd);
-    next();
+    next(sig);
   });
 };
