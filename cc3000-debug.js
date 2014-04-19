@@ -27,8 +27,6 @@ var opts = require('nomnom')
   })
   .parse();
 
-console.error('inspect'.grey)
-
 require('buffer').INSPECT_MAX_BYTES = 16;
 
 var D = require('./defines');
@@ -81,7 +79,16 @@ function parseHost (dir, buf, miso)
     },
     CONNECT: function (data) {
       return util.format('-> connecting socket #%d... (%d.%d.%d.%d)', data.readInt32LE(0), /*data.readInt32LE(8),*/ data.readUInt8(19), data.readUInt8(18), data.readUInt8(17), data.readUInt8(16))
-    }
+    },
+    SELECT: function (data) {
+      return util.format('-> poll sockets (%s). r:%s w:%s e:%s. timeout: %dms',
+          // data.readInt32LE(0),
+          data.readInt32LE(20) ? 'blocking' : 'non-blocking',
+          ('0000' + data.readInt32LE(24).toString(2)).slice(-4),
+          ('0000' + data.readInt32LE(28).toString(2)).slice(-4),
+          ('0000' + data.readInt32LE(32).toString(2)).slice(-4),
+          data.readInt32LE(36)*1e3 + data.readInt32LE(40)/1e3);
+    },
   };
   var evnt_format = {
     SOCKET: function (data) {
@@ -89,7 +96,14 @@ function parseHost (dir, buf, miso)
     },
     CLOSE_SOCKET: function (data) {
       return util.format('<- socket closed. (errno %d)', data.readInt32LE(0));
-    }
+    },
+    SELECT: function (data) {
+      return util.format('<- polled sockets (errno %d).    r:%s w:%s e:%s.',
+          data.readInt32LE(0),
+          ('0000' + data.readInt32LE(4).toString(2)).slice(-4),
+          ('0000' + data.readInt32LE(8).toString(2)).slice(-4),
+          ('0000' + data.readInt32LE(12).toString(2)).slice(-4));
+    },
   }
 
   // parse payload
@@ -201,28 +215,28 @@ var iterator = (function () {
 
 if (!opts.log) {
   // Start probing.
-  require('./probe');  
+  require('./probe').probe(function () {
+    var log = ts.createReadStream('/tmp/sigrok.vcd', {
+      beginAt: 0,
+      onMove: 'follow',
+      detectTruncate: true,
+      onTruncate: 'end',
+      endOnError: false
+    });
 
-  // Create tail stream.
-  var log = ts.createReadStream('/tmp/sigrok.vcd', {
-    beginAt: 0,
-    onMove: 'follow',
-    detectTruncate: true,
-    onTruncate: 'end',
-    endOnError: false
+    // Pipe to gzipped output.
+    var filename = __dirname + '/log/' + (new Date).toJSON() + '.log';
+    console.log(('(outputting to ' + filename + ')').grey);
+    process.on('exit', function () {
+      console.log(('(saved output to ' + filename + ')').grey);
+    });
+    log
+      .pipe(zlib.createGzip())
+      .pipe(fs.createWriteStream(filename))
+
+    // Start with tailed log.
+    start(log);
   });
-
-  // Pipe to gzipped output.
-  var filename = __dirname + '/logs/' + (new Date).toJSON() + '.log';
-  process.on('exit', function () {
-    console.log('outputt to ' + filename);
-  });
-  log
-    .pipe(zlib.createGzip())
-    .pipe(fs.createWriteStream(filename))
-
-  // Start with tailed log.
-  start(log);
 
 } else {
   // Load gzipped output
@@ -237,7 +251,7 @@ function start (log)
     combineSamples: false
   }))
   .on('begin', function (state) {
-    console.log(state);
+    // console.log(state);
   })
   .on('sample', iterator);
 };
