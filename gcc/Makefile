@@ -5,4 +5,4 @@ build:
 
 poll: build
 	@echo starting 1>&2
-	@sigrok-cli --driver fx2lafw --continuous --output-format binary | ./sigrok_compactor
+	@sigrok-cli --output-format binary --driver fx2lafw --continuous --config samplerate=4M | ./sigrok_compactor

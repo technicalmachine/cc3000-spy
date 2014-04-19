@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-var csv = require('csv');
 var fs = require('fs');
 var util = require('util');
+
+var ts = require('tail-stream');
+var vcd = require('vcd');
 require('colors');
 
 var opts = require('nomnom')
@@ -10,7 +12,13 @@ var opts = require('nomnom')
       abbr: 's',
       flag: true,
       help: 'Show signals'
-   }).parse();
+   })
+	.option('raw', {
+      abbr: 'r',
+      flag: true,
+      help: 'Show raw communication'
+   })
+   .parse();
 
 console.error('inspect'.grey)
 
@@ -20,50 +28,10 @@ var D = require('./defines');
 var HCI_EVENT = {}
 for (var k in D) { if (1) HCI_EVENT[D[k]] = k; };
 
-console.error('csv'.grey)
-
-console.log('tail ' + (opts.t ? '-n ' + opts.t + ' ' : '') + process.argv[2])
-require('child_process').exec('tail ' + (opts.t ? '-n ' + opts.t + ' ' : '') + process.argv[2], function (err, stdout) {
-	csv()
-	.from.string(stdout)
-	.transform( function(row, i){
-		return row.map(parseFloat);
-	})
-	.to.array(function(data){
-		console.error('csvout'.grey)
-		headers = ['time', 'enable', 'miso', 'irq', 'mosi', 'clock', 'sw_en'];
-		next(headers, data);
-	});
-});
-
-function iterate (headers, data, callback) {
-	var e = new (require('events').EventEmitter)();
-	setImmediate(function () {
-		var last = {};
-		for (var i = 0; i < data.length; i++) {
-			var row = {};
-			for (var j = 0; j < data[i].length; j++) {
-				row[headers[j]] = data[i][j];
-			}
-
-			var changes = {};
-			for (var j = 0; j < data[i].length; j++) {
-				if (data[i][j] != last[j]) {
-					// e.emit(headers[j] + '-' + (data[i][j] ? 'rise' : 'fall'), o);
-					changes[headers[j]] = data[i][j];
-				}
-			}
-
-			callback(row, changes);
-			last = data[i];
-		}
-	});
-	return e;
-}
-
 // http://processors.wiki.ti.com/index.php/CC3000_Protocol#WRITE_protocol_in_MOSI_direction
 
-function parseHost (dir, buf, miso) {
+function parseHost (dir, buf, miso)
+{
 	function abort (str) {
 		return util.format.apply(util, ['%s %s ' + str].concat([(dir + ' err').red, '-'.grey], [].slice.apply(arguments).slice(1), '\n\tCC3K:'.red, miso, '\n\tHOST:'.red, buf));
 	}
@@ -149,48 +117,50 @@ function parseHost (dir, buf, miso) {
 	return util.format('%s %s', opcode, payload);
 }
 
-function next (headers, data) {
-	console.error('next'.grey)
-
+var iterator = (function () {
 	// data is a stream of data
-	console.log(headers);
 	var misob = [], mosib = [], miso = [], mosi = [];
 	var dir = null;
-	iterate(headers, data, function (data, change) {
+
+	return function next (sample, change, data) {
 		if (change.sw_en) {
-			console.log(('\n\ncc3000 enabled at ' + data.time).toUpperCase().white.bold)
+			console.log(('\n\ncc3000 enabled at ' + sample).toUpperCase().white.bold)
 		}
-		if (change.enable == 0) {
+		if (change.cs == 0) {
 			miso = []; misob = [];
 		 	mosi = []; mosib = [];
 		}
-		if (change.enable == 1) {
+		if (change.cs == 1) {
 			// end of switch
-			// console.log('MOSI', new Buffer(mosi));
-			// console.log('MISO', new Buffer(miso));
-			if (dir == 'host') {
-				console.log('', parseHost(dir, new Buffer(mosi), new Buffer(miso)));
-			} else {
-				console.log('', parseHost(dir, new Buffer(mosi), new Buffer(miso)));
+			if (opts.raw) {
+				console.log('MOSI', new Buffer(mosi));
+				console.log('MISO', new Buffer(miso));
 			}
+			// else {
+				if (dir == 'host') {
+					console.log('', parseHost(dir, new Buffer(mosi), new Buffer(miso)));
+				} else {
+					console.log('', parseHost(dir, new Buffer(mosi), new Buffer(miso)));
+				}
+			// }
 		}
 		if ('irq' in change) {
 			if (change.irq) {
-				if (opts.signals) if (!data.enable) console.log('↑ IRQ'.grey); else console.log('↑ CS '.grey);
+				if (opts.signals) if (!data.cs) console.log('↑ IRQ'.grey); else console.log('↑ CS '.grey);
 				if (dir == 'cc3k') {
 					dir = null;
 					// console.log('cc3k end.\n'.green);
 				}
 			} else {
-				if (opts.signals) if (data.enable) console.log('↓ IRQ'.yellow); else console.log('↓ CS '.cyan);
+				if (opts.signals) if (data.cs) console.log('↓ IRQ'.yellow); else console.log('↓ CS '.cyan);
 				if (dir == null) {
 					dir = 'cc3k';
 					// console.log('CC3K REQUEST'.green);
 				}
 			}
 		}
-		if ('enable' in change) {
-			if (change.enable) {
+		if ('cs' in change) {
+			if (change.cs) {
 				if (dir == 'host') {
 					dir = null;
 					// console.log('host end.\n'.yellow);
@@ -202,7 +172,7 @@ function next (headers, data) {
 				}
 			}
 		}
-		if (change.clock == false) {
+		if (change.sck == false) {
 			if (data.sw_en) {
 				misob.push(data.miso); mosib.push(data.mosi);
 				// console.log('mosi:', data.mosi, 'miso:', data.miso);
@@ -218,5 +188,27 @@ function next (headers, data) {
 				}
 			}
 		}
+	}
+})();
+
+
+var fs = require('fs');
+
+var buf = new Buffer(0);
+var data = [];
+var last = {};
+
+ts.createReadStream(__dirname + '/test.bin', {
+    beginAt: 0,
+    onMove: 'follow',
+    detectTruncate: true,
+    onTruncate: 'end',
+    endOnError: false
+})
+	.pipe(vcd.createStream({
+		combineSamples: false
+	}))
+	.on('begin', function (state) {
+		console.log(state);
 	})
-}
+	.on('sample', iterator);
