@@ -26,7 +26,11 @@ exports.probe = function (next) {
   sig.stderr.on('data', function (data) {
     if (String(data).match(/Device stopped/)) {
       sig.kill();
-      console.error(String(data));
+      console.error(String(data).grey);
+    }
+    if (String(data).match(/No devices/)) {
+      console.error(String(data).grey);
+      process.exit(1);
     }
   })
   sig.stdout.pipe(process.stdout);

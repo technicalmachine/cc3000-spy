@@ -6,9 +6,10 @@ var fs = require('fs');
 var util = require('util');
 var zlib = require('zlib');
 
-var ts = require('tail-stream');
 var vcd = require('vcd');
 require('colors');
+
+require('colorsafeconsole')(console)
 
 var opts = require('nomnom')
   .options({
@@ -40,7 +41,47 @@ var LARR = '\u2190';
 var RARR = '\u2192';
 
 
+function formatFdset (n) {
+  return ('0000' + n.toString(2)).slice(-4).split('').reverse().map(function (s, i) {
+    return s == '0' ? '.'.grey : String(i)
+  }).join('');
+}
 
+var cmnd_format = {
+  SOCKET: function (data) {
+    return util.format('-> request to open socket...');
+  },
+  CLOSE_SOCKET: function (data) {
+    return util.format('-> request to close socket #%d...', data.readInt32LE(0));
+  },
+  CONNECT: function (data) {
+    return util.format('-> connecting socket #%d... (%d.%d.%d.%d)', data.readInt32LE(0), /*data.readInt32LE(8),*/ data.readUInt8(19), data.readUInt8(18), data.readUInt8(17), data.readUInt8(16))
+  },
+  SELECT: function (data) {
+    return util.format(RARR + ' r %s w %s e %s [%s, timeout: %dms]',
+        // data.readInt32LE(0),
+        formatFdset(data.readInt32LE(24)),
+        formatFdset(data.readInt32LE(28)),
+        formatFdset(data.readInt32LE(32)),
+        data.readInt32LE(20) ? 'blocking' : 'non-blocking',
+        data.readInt32LE(36)*1e3 + data.readInt32LE(40)/1e3);
+  },
+};
+var evnt_format = {
+  SOCKET: function (data) {
+    return util.format('<- socket #%d opened.', data.readInt32LE(0));
+  },
+  CLOSE_SOCKET: function (data) {
+    return util.format('<- socket closed. (errno %d)', data.readInt32LE(0));
+  },
+  SELECT: function (data) {
+    return util.format(LARR + ' r %s w %s e %s [status %d]',
+        formatFdset(data.readInt32LE(4)),
+        formatFdset(data.readInt32LE(8)),
+        formatFdset(data.readInt32LE(12)),
+        data.readInt32LE(0));
+  },
+}
 
 
 var D = require('./defines');
@@ -82,48 +123,6 @@ function parseHost (dir, buf, miso)
 
   function n (arg) {
     return (nget(arg) + '                ').slice(0, 20);
-  }
-
-  function formatFdset (n) {
-    return ('0000' + n.toString(2)).slice(-4).split('').reverse().map(function (s, i) {
-      return s == '0' ? '.'.grey : String(i)
-    }).join('');
-  }
-
-  var cmnd_format = {
-    SOCKET: function (data) {
-      return util.format('-> request to open socket...');
-    },
-    CLOSE_SOCKET: function (data) {
-      return util.format('-> request to close socket #%d...', data.readInt32LE(0));
-    },
-    CONNECT: function (data) {
-      return util.format('-> connecting socket #%d... (%d.%d.%d.%d)', data.readInt32LE(0), /*data.readInt32LE(8),*/ data.readUInt8(19), data.readUInt8(18), data.readUInt8(17), data.readUInt8(16))
-    },
-    SELECT: function (data) {
-      return util.format(RARR + ' r %s w %s e %s [%s, timeout: %dms]',
-          // data.readInt32LE(0),
-          formatFdset(data.readInt32LE(24)),
-          formatFdset(data.readInt32LE(28)),
-          formatFdset(data.readInt32LE(32)),
-          data.readInt32LE(20) ? 'blocking' : 'non-blocking',
-          data.readInt32LE(36)*1e3 + data.readInt32LE(40)/1e3);
-    },
-  };
-  var evnt_format = {
-    SOCKET: function (data) {
-      return util.format('<- socket #%d opened.', data.readInt32LE(0));
-    },
-    CLOSE_SOCKET: function (data) {
-      return util.format('<- socket closed. (errno %d)', data.readInt32LE(0));
-    },
-    SELECT: function (data) {
-      return util.format(LARR + ' r %s w %s e %s [status %d]',
-          formatFdset(data.readInt32LE(4)),
-          formatFdset(data.readInt32LE(8)),
-          formatFdset(data.readInt32LE(12)),
-          data.readInt32LE(0));
-    },
   }
 
   function formatCommand (n) {
@@ -184,8 +183,8 @@ function parseHost (dir, buf, miso)
 
 var iterator = (function () {
   // data is a stream of data
-  var miso = new Buffer(4096); var misob = 0, misobi = 0;
-  var mosi = new Buffer(4096); var mosib = 0, mosibi = 0;
+  var miso = new Buffer(16*1024); var misob = 0, misobi = 0;
+  var mosi = new Buffer(16*1024); var mosib = 0, mosibi = 0;
   var dir = null;
 
   return function next (sample, change, data) {
@@ -265,13 +264,7 @@ var iterator = (function () {
 if (!opts.input) {
   // Start probing.
   require('./probe').probe(function (prober) {
-    var log = ts.createReadStream('/tmp/sigrok.vcd', {
-      beginAt: 0,
-      onMove: 'follow',
-      detectTruncate: true,
-      onTruncate: 'end',
-      endOnError: false
-    });
+    var log = require('child_process').spawn('tail', ['-n', '10000000000', '-F', '/tmp/sigrok.vcd']);
 
     var once = false;
     process.on('SIGINT', function () {
@@ -281,7 +274,7 @@ if (!opts.input) {
       }
       once = true;
       console.error('(killed sigrok, wait to finish...)'.grey);
-      log.watcher.close();
+      log.kill();
       prober.on('exit', function () {
         fs.createReadStream('/tmp/sigrok.vcd')
           .pipe(zlib.createGzip())
@@ -298,7 +291,7 @@ if (!opts.input) {
     });
 
     // Start with tailed log.
-    start(log);
+    start(log.stdout);
   });
 
 } else {

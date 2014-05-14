@@ -6,8 +6,8 @@
   "dependencies": {
     "colors": "~0.6.2",
     "nomnom": "~1.6.2",
-    "tail-stream": "~0.2.0",
-    "vcd": "~0.0.3"
+    "vcd": "~0.0.3",
+    "colorsafeconsole": "0.0.4"
   },
   "devDependencies": {},
   "scripts": {
