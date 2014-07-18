@@ -2,7 +2,10 @@
   "name": "cc3k_status",
   "version": "0.0.0",
   "description": "",
-  "main": "cc3k-debug.js",
+  "main": "./spy.js",
+  "bin": {
+    "cc3000-spy": "./spy.js"
+  },
   "dependencies": {
     "colors": "~0.6.2",
     "nomnom": "~1.6.2",
