@@ -1,5 +1,5 @@
 {
-  "name": "cc3k_status",
+  "name": "cc3000-spy",
   "version": "0.0.0",
   "description": "",
   "main": "./spy.js",
