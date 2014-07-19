@@ -13,3 +13,16 @@ cc3000-spy
 ```
 
 with the dongle attached.
+
+## missing `fx2lafw-saleae-logic.fw`?
+
+if you get an error for this, try the following commands to acquire the file:
+
+```
+brew install rpm2cpio
+wget ftp://ftp.pbone.net/mirror/ftp5.gwdg.de/pub/opensuse/repositories/home:/Heinervdm:/sigrok/openSUSE_Tumbleweed/noarch/sigrok-firmware-fx2lafw-0.1.1-4.1.noarch.rpm
+rpm2cpio.pl sigrok-firmware-fx2lafw-0.1.1-4.1.noarch.rpm | cpio -idmv
+cp ./usr/share/sigrok-firmware/fx2lafw-saleae-logic.fw .
+rm -rf ./usr
+mv fx2lafw-saleae-logic.fw <location it says to move to>
+```
