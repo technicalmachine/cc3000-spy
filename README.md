@@ -14,6 +14,27 @@ cc3000-spy
 
 with the dongle attached.
 
+
+## Attaching the dongle
+
+From <https://tessel.io/docs/hardware#advanced-features>:
+
+```
+Six-pin, 0.05" pitch debug header for the CC3000.
+
+Pinout (pin 1 is closest to Module Ports C and D, pin 6 is nearest the LPC):
+
+1. CS
+2. MISO
+3. IRQ
+4. MOSI
+5. SCK
+6. Enable
+```
+
+Connect logic analyzer GND somewhere convenient, such as the header pin next to the Port C label.
+
+
 ## Bunch of Python warnings while installing sigrok-cli?
 
 
