@@ -21,7 +21,7 @@ exports.probe = function (next) {
     '--config', 'samplerate=' + opts.samplerate,
     '--output-format', 'vcd',
     '--output-file', '/tmp/sigrok.vcd',
-    '--probes', '0=cs,1=miso,2=irq,3=mosi,4=sck,5=sw_en'
+    '--channels', '0=cs,1=miso,2=irq,3=mosi,4=sck,5=sw_en'
   ])
   sig.stderr.on('data', function (data) {
     if (String(data).indexOf('fx2lafw-saleae-logic.fw') > -1) {
