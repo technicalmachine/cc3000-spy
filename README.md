@@ -2,6 +2,8 @@
 
 # cc3000-spy
 
+[![Greenkeeper badge](https://badges.greenkeeper.io/tessel/cc3000-spy.svg)](https://greenkeeper.io/)
+
 ```
 npm install -g git+https://github.com/tessel/cc3000-spy
 ```
