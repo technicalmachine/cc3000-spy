@@ -7,8 +7,8 @@
     "cc3000-spy": "./spy.js"
   },
   "dependencies": {
-    "colors": "~0.6.2",
-    "nomnom": "~1.6.2",
+    "colors": "~1.1.2",
+    "nomnom": "~1.8.1",
     "vcd": "~0.0.3",
     "colorsafeconsole": "0.0.4"
   },
